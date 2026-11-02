@@ -1,0 +1,137 @@
+pipeline{
+    agent any
+    
+    tools{
+        nodejs 'node23'
+    }
+    environment{
+        SONAR_SCANNER_HOME = tool 'sonar-scanner'
+        Image_Tag = "v${BUILD_NUMBER}"
+    }
+    
+    stages{
+        stage('Git Checkout'){
+            steps{
+                git branch: 'main', url: 'https://github.com/SurajKhanderao/3-Tier-DevSecOps-Mega-Project.git'
+            }
+        }
+    stage('Frontend Syntax-Check'){
+        steps{
+               dir('client') {
+                sh ' find . -name "*.js" -exec node --check {} +'        
+             }
+         }
+    }
+     stage('Backend Syntax-Check'){
+        steps{
+               dir('api') {
+                sh ' find . -name "*.js" -exec node --check {} +'        
+             }
+         }
+    }
+     stage('GitLeaks Scan') {
+        steps {
+            sh 'gitleaks detect --source ./client --exit-code 1'
+            sh 'gitleaks detect --source ./api --exit-code 1'
+         }
+     }
+        
+    stage('FrontEnd Dependencies'){
+        steps{
+               dir('client') {
+                sh ' npm ci'        
+             }
+         }
+    }
+     stage('BackEnd Dependencies'){
+        steps{
+               dir('api') {
+                sh ' npm ci'        
+             }
+         }
+    }
+    stage('Trivy file scan'){
+        steps{
+              sh ' trivy fs --format table -o fs-report.html .'
+         }
+    } 
+     stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=NodeJS-Project \
+                            -Dsonar.projectKey=NodeJS-Project '''
+                }
+            }
+        }
+        stage('Quality Gate Check') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+    stage('Docker Image Build-Scan-Push Fronend'){
+        steps{
+              script{
+                  withDockerRegistry(credentialsId: 'docker-hub-cred') {
+                      dir('client'){
+                      sh 'docker image build -t surajkhanderao/frontend:${Image_Tag} .'
+                      sh 'trivy image --format table -o front-image.html surajkhanderao/frontend:${Image_Tag}'
+                      sh 'docker image push surajkhanderao/frontend:${Image_Tag}'
+                      }
+                 }
+              }
+         }
+    }
+    stage('Docker Image Build-Scan-Push Backend'){
+        steps{
+              script{
+                  withDockerRegistry(credentialsId: 'docker-hub-cred') {
+                      dir('api'){
+                      sh 'docker image build -t surajkhanderao/backend:${Image_Tag} .'
+                      sh 'trivy image --format table -o back-image.html surajkhanderao/backend:${Image_Tag}'
+                      sh 'docker image push surajkhanderao/backend:${Image_Tag}'
+                      }
+                 }
+              }
+         }
+    }
+    stage('Update Manifests'){
+        steps{
+            script{
+                  cleanWs()
+                   withCredentials([usernamePassword(credentialsId: 'git-cred', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                            sh '''
+                                 git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/SurajKhanderao/3-Tier-DevSecOps-Mega-Project.git
+                                 
+                                 cd 3-Tier-DevSecOps-Mega-Project
+                                 
+                                 sed -i "s|surajkhanderao/frontend:.*|surajkhanderao/frontend:${Image_Tag}|" k8s-prod/frontend.yaml
+                                 sed -i "s|surajkhanderao/backend:.*|surajkhanderao/backend:${Image_Tag}|" k8s-prod/backend.yaml
+                                 
+                                 echo "Frontend Updated"
+                                 cat k8s-prod/frontend.yaml
+                                 
+                                 echo "Backend Updated"
+                                 cat k8s-prod/backend.yaml
+                                 # Commit and push the changes
+                                      git config user.name "Jenkins"
+                                      git config user.email "jenkins@example.com"
+                                      git add k8s-prod/backend.yaml
+                                      git add k8s-prod/frontend.yaml       
+                                      git commit -m "Update image tag to ${IMAGE_TAG}"
+                                     git push origin main
+                        '''
+                  }
+            }
+         }
+    }
+     stage('Manual Approval for Production') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    input message: 'Approve deployment to PRODUCTION?', ok: 'Deploy'
+                }
+            }
+        }
+  }
+ }
