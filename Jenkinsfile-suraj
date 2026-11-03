@@ -99,7 +99,6 @@ pipeline{
     stage('Update Manifests'){
         steps{
             script{
-                  cleanWs()
                    withCredentials([usernamePassword(credentialsId: 'git-cred', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
                             sh '''
                                  git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/SurajKhanderao/3-Tier-DevSecOps-Mega-Project.git
@@ -126,12 +125,69 @@ pipeline{
             }
          }
     }
-     stage('Manual Approval for Production') {
+    stage('Manual Approval for Production') {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
                     input message: 'Approve deployment to PRODUCTION?', ok: 'Deploy'
                 }
             }
         }
+         
+         stage('K8S Deployment') {
+        steps {
+            script{
+                withKubeConfig(caCertificate: '', clusterName: ' sk-cluster', contextName: '', credentialsId: 'k8s-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://AD80FCE2DA2AC9E6166071BD619A1A3E.gr7.eu-west-1.eks.amazonaws.com') {
+                        sh '''               
+                           kubectl apply -f k8s-prod/external-secrets.yml -n prod
+                           kubectl apply -f k8s-prod/mysql.yaml -n prod
+                           kubectl apply -f k8s-prod/frontend.yaml -n prod
+                           kubectl apply -f k8s-prod/backend.yaml -n prod
+                           kubectl apply -f k8s-prod/ci.yaml
+                           kubectl apply -f k8s-prod/ingress.yaml -n prod
+                           
+                           sleep 30
+                           kubectl get pods -n prod
+                            kubectl get svc -n prod
+                           kubectl get ing -n prod
+                           '''
+               }
+            }
+         }
+     }
   }
- }
+ post {
+    always {
+        script {
+            cleanWs()
+            def jobName = env.JOB_NAME
+            def buildNumber = env.BUILD_NUMBER
+            def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
+            def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
+
+            def body = """
+                <html>
+                <body>
+                <div style="border: 4px solid ${bannerColor}; padding: 10px;">
+                <h2>${jobName} - Build ${buildNumber}</h2>
+                <div style="background-color: ${bannerColor}; padding: 10px;">
+                <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
+                </div>
+                <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
+                </div>
+                </body>
+                </html>
+            """
+
+            emailext (
+                subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                body: body,
+                to: 'khanderaongn@gmail.com',
+                from: 'khanderaosurj@gmail.com',
+                replyTo: 'jenkins@devopsshack.com',
+                mimeType: 'text/html',
+               
+            )
+        }
+    }
+}
+}
