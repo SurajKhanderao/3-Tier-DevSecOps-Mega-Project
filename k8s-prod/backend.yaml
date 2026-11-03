@@ -1,13 +1,20 @@
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: prod
+data:
+  MYSQL_DATABASE: crud_app
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
   namespace: prod
-  labels:
-    app: backend
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: backend
@@ -25,17 +32,21 @@ spec:
             - name: DB_HOST
               value: mysql
             - name: DB_USER
-              value: root
-            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: DB_USER
+            - name: MYSQL_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: mysql-secret
                   key: MYSQL_ROOT_PASSWORD
-            - name: DB_NAME
+            - name: MYSQL_DATABASE
               valueFrom:
                 configMapKeyRef:
                   name: mysql-config
                   key: MYSQL_DATABASE
+
 ---
 apiVersion: v1
 kind: Service
@@ -48,4 +59,3 @@ spec:
   ports:
     - port: 5000
       targetPort: 5000
-  type: ClusterIP
