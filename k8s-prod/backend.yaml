@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: surajkhanderao/backend:v7
+          image: surajkhanderao/backend:v8
           ports:
             - containerPort: 5000
           env:
